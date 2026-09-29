@@ -21,11 +21,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install Android SDK packages
-        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -41,7 +44,6 @@ jobs:
 
           unzip -q kage-elite-academy-app.zip -d /tmp/kage-source
 
-          # Locate the web app regardless of the ZIP's top-level folder name.
           INDEX_DIR="$(dirname "$(find /tmp/kage-source -type f -name index.html -print -quit)")"
           if [ -z "$INDEX_DIR" ] || [ "$INDEX_DIR" = "." ]; then
             echo "index.html was not found in the uploaded ZIP"
@@ -50,12 +52,11 @@ jobs:
           fi
           cp -R "$INDEX_DIR"/. app/src/main/assets/
 
-          # Use the supplied KAGE icon from the project ZIP when present.
           ICON="$(find /tmp/kage-source -type f \( -iname 'kage-launcher.png' -o -iname '*kage*.png' -o -iname '*icon*.png' -o -iname '*logo*.png' \) -print -quit)"
           if [ -n "$ICON" ]; then
             cp "$ICON" app/src/main/res/drawable-nodpi/kage_launcher.png
           else
-            # Valid fallback icon if the ZIP has no raster icon.
+            mkdir -p app/src/main/res/drawable
             cat > app/src/main/res/drawable/kage_launcher.xml <<'EOF'
           <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
               <path android:fillColor="#07140B" android:pathData="M0,0h108v108h-108z"/>
@@ -86,7 +87,6 @@ jobs:
 
           cat > app/build.gradle <<'EOF'
           plugins { id 'com.android.application' }
-
           android {
               namespace 'com.kage.focus'
               compileSdk 35
@@ -151,7 +151,6 @@ jobs:
 
           cat > app/src/main/java/com/kage/focus/MainActivity.java <<'EOF'
           package com.kage.focus;
-
           import android.Manifest;
           import android.app.Activity;
           import android.content.pm.PackageManager;
@@ -161,11 +160,9 @@ jobs:
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
-
           public class MainActivity extends Activity {
               private WebView webView;
               private static final int AUDIO_REQUEST = 42;
-
               @Override protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
                   webView = new WebView(this);
@@ -192,11 +189,9 @@ jobs:
                       requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, AUDIO_REQUEST);
                   webView.loadUrl("file:///android_asset/index.html");
               }
-
               @Override public void onBackPressed() {
                   if (webView.canGoBack()) webView.goBack(); else super.onBackPressed();
               }
-
               @Override protected void onDestroy() {
                   if (webView != null) webView.destroy();
                   super.onDestroy();
