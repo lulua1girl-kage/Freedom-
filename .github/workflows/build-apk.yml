@@ -40,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf /tmp/kage-source
-          mkdir -p /tmp/kage-source app/src/main/assets app/src/main/java/com/kage/focus app/src/main/res/drawable-nodpi app/src/main/res/values
+          mkdir -p /tmp/kage-source app/src/main/assets app/src/main/java/com/kage/focus app/src/main/res/drawable-nodpi app/src/main/res/values app/src/main/res/xml
 
           unzip -q kage-elite-academy-app.zip -d /tmp/kage-source
 
@@ -50,6 +50,85 @@ jobs:
             find /tmp/kage-source -maxdepth 3 -type f | head -100
             exit 1
           fi
+
+          APP_JS="$(find /tmp/kage-source -type f -name app.js -print -quit)"
+          if [ -z "$APP_JS" ]; then
+            echo "app.js was not found in the uploaded ZIP"
+            exit 1
+          fi
+
+          python3 - "$APP_JS" <<'PY'
+          from pathlib import Path
+          import sys
+
+          p = Path(sys.argv[1])
+          s = p.read_text(encoding='utf-8')
+
+          marker = "function sessionNowIso(){return new Date(Date.now()).toISOString()}"
+          bridge = r'''function nativePackagesForApps(apps){
+            const map={
+              'Instagram':'com.instagram.android',
+              'Pinterest':'com.pinterest',
+              'YouTube':'com.google.android.youtube',
+              'TikTok':'com.zhiliaoapp.musically',
+              'Facebook':'com.facebook.katana',
+              'Twitter':'com.twitter.android',
+              'X':'com.twitter.android',
+              'Chrome':'com.android.chrome'
+            };
+            return [...new Set((apps||[]).map(x=>map[String(x)]).filter(Boolean))];
+          }
+          function nativeAppsForBlocklist(name){
+            const list=state.blocklists.find(x=>x.name===name);
+            const apps=(name==='All distracting apps'||!list)?state.blockedApps.map(x=>x.name):(list.apps||[]);
+            return nativePackagesForApps(apps);
+          }
+          function startNativeProtection(session){
+            if(!window.KageNative||!session)return true;
+            const packages=nativeAppsForBlocklist(session.blocklist);
+            if(!packages.length)return true;
+            const ok=window.KageNative.startProtection(packages.join(','),new Date(session.endAt).getTime());
+            if(!ok){
+              window.KageNative.openAccessibilitySettings();
+              toast('Enable KAGE Focus accessibility access, then start the session again.');
+              return false;
+            }
+            return true;
+          }
+          function stopNativeProtection(){if(window.KageNative)window.KageNative.stopProtection();}
+          '''
+          if marker not in s:
+              raise SystemExit('Expected session marker not found')
+          s=s.replace(marker, bridge+"\n"+marker, 1)
+
+          old="state.sessions.unshift(session);state.focusEnabled=true;applyBlocklist(session.blocklist,true);save();toast(`Protection active until ${formatEndDate(session.endAt)}.`);route='home';render();"
+          new="if(!startNativeProtection(session))return;state.sessions.unshift(session);state.focusEnabled=true;applyBlocklist(session.blocklist,true);save();toast(`Protection active until ${formatEndDate(session.endAt)}.`);route='home';render();"
+          if old not in s:
+              raise SystemExit('Expected start-session code not found')
+          s=s.replace(old,new,1)
+
+          old2="state.focusMinutes+=earned;state.focusEnabled=false;applyBlocklist(s.blocklist,false);save();toast(auto?'Focus session finished exactly on schedule.':'Session ended. Focus time saved.');render();"
+          new2="state.focusMinutes+=earned;state.focusEnabled=false;applyBlocklist(s.blocklist,false);stopNativeProtection();save();toast(auto?'Focus session finished exactly on schedule.':'Session ended. Focus time saved.');render();"
+          if old2 not in s:
+              raise SystemExit('Expected end-session code not found')
+          s=s.replace(old2,new2,1)
+
+          old3="active.status='ACTIVE';active.lastHydratedAt=sessionNowIso();state.focusEnabled=true;applyBlocklist(active.blocklist,true);save();"
+          new3="active.status='ACTIVE';active.lastHydratedAt=sessionNowIso();state.focusEnabled=true;applyBlocklist(active.blocklist,true);if(!startNativeProtection(active)){state.focusEnabled=false;active.active=false;active.status='BLOCKER_REQUIRED';save();return;}save();"
+          if old3 not in s:
+              raise SystemExit('Expected hydration code not found')
+          s=s.replace(old3,new3,1)
+
+          old4="state.scheduledSessions=state.scheduledSessions.filter(x=>x.id!==due.id);const s={...due,id:createSessionId(),active:true,status:'ACTIVE',completed:false,createdAt:due.startAt,schemaVersion:2};state.sessions.unshift(s);state.focusEnabled=true;applyBlocklist(s.blocklist,true);save();toast(`Scheduled focus started · until ${formatEndDate(s.endAt)}.`);render();"
+          new4="state.scheduledSessions=state.scheduledSessions.filter(x=>x.id!==due.id);const s={...due,id:createSessionId(),active:true,status:'ACTIVE',completed:false,createdAt:due.startAt,schemaVersion:2};if(!startNativeProtection(s))return;state.sessions.unshift(s);state.focusEnabled=true;applyBlocklist(s.blocklist,true);save();toast(`Scheduled focus started · until ${formatEndDate(s.endAt)}.`);render();"
+          if old4 not in s:
+              raise SystemExit('Expected scheduled-session code not found')
+          s=s.replace(old4,new4,1)
+
+          p.write_text(s,encoding='utf-8')
+          print('Patched native protection bridge:', p)
+          PY
+
           cp -R "$INDEX_DIR"/. app/src/main/assets/
 
           ICON="$(find /tmp/kage-source -type f \( -iname 'kage-launcher.png' -o -iname '*kage*.png' -o -iname '*icon*.png' -o -iname '*logo*.png' \) -print -quit)"
@@ -94,8 +173,8 @@ jobs:
                   applicationId 'com.kage.focus'
                   minSdk 23
                   targetSdk 35
-                  versionCode 1
-                  versionName '1.0'
+                  versionCode 2
+                  versionName '1.1'
               }
               buildTypes {
                   release {
@@ -123,8 +202,18 @@ jobs:
                   <item name="android:navigationBarColor">#080808</item>
                   <item name="android:statusBarColor">#080808</item>
                   <item name="android:windowLightStatusBar">false</item>
-              </style>
+          </style>
           </resources>
+          EOF
+
+          cat > app/src/main/res/xml/accessibility_service_config.xml <<'EOF'
+          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+              android:accessibilityEventTypes="typeWindowStateChanged"
+              android:accessibilityFeedbackType="feedbackGeneric"
+              android:notificationTimeout="100"
+              android:canRetrieveWindowContent="false"
+              android:description="KAGE Focus uses accessibility access only to detect when a selected app opens during an active focus session and redirect you back to KAGE."
+              android:settingsActivity="com.kage.focus.MainActivity" />
           EOF
 
           cat > app/src/main/AndroidManifest.xml <<'EOF'
@@ -139,30 +228,237 @@ jobs:
                   android:resizeableActivity="true"
                   android:supportsRtl="true"
                   android:theme="@style/AppTheme">
+                  <activity android:name=".BlockedActivity" android:exported="false" android:excludeFromRecents="true" android:launchMode="singleTop" />
                   <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="portrait">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
                   </activity>
+                  <service
+                      android:name=".KageBlockerService"
+                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+                      android:exported="false">
+                      <intent-filter>
+                          <action android:name="android.accessibilityservice.AccessibilityService" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.accessibilityservice"
+                          android:resource="@xml/accessibility_service_config" />
+                  </service>
               </application>
           </manifest>
           EOF
 
+          cat > app/src/main/java/com/kage/focus/KageBridge.java <<'EOF'
+          package com.kage.focus;
+
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.provider.Settings;
+          import android.text.TextUtils;
+          import android.webkit.JavascriptInterface;
+          import java.util.Arrays;
+          import java.util.HashSet;
+          import java.util.Set;
+
+          public final class KageBridge {
+              private final Context context;
+              private final SharedPreferences prefs;
+
+              KageBridge(Context context) {
+                  this.context = context.getApplicationContext();
+                  this.prefs = this.context.getSharedPreferences("kage_native_blocker", Context.MODE_PRIVATE);
+              }
+
+              @JavascriptInterface
+              public boolean startProtection(String packagesCsv, long endAtMillis) {
+                  if (!KageBlockerService.isAccessibilityEnabled(context)) return false;
+                  Set<String> packages = new HashSet<>();
+                  if (!TextUtils.isEmpty(packagesCsv)) packages.addAll(Arrays.asList(packagesCsv.split(",")));
+                  packages.remove("");
+                  prefs.edit().putBoolean("active", true).putLong("endAt", endAtMillis).putStringSet("packages", packages).apply();
+                  KageBlockerService.requestRefresh();
+                  return true;
+              }
+
+              @JavascriptInterface
+              public void stopProtection() {
+                  prefs.edit().putBoolean("active", false).remove("endAt").remove("packages").apply();
+                  KageBlockerService.requestRefresh();
+              }
+
+              @JavascriptInterface
+              public void openAccessibilitySettings() {
+                  try {
+                      Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+                      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                      context.startActivity(intent);
+                  } catch (Exception ignored) { }
+              }
+
+              @JavascriptInterface
+              public boolean isAccessibilityEnabled() {
+                  return KageBlockerService.isAccessibilityEnabled(context);
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/kage/focus/KageBlockerService.java <<'EOF'
+          package com.kage.focus;
+
+          import android.accessibilityservice.AccessibilityService;
+          import android.content.ComponentName;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.provider.Settings;
+          import android.text.TextUtils;
+          import android.view.accessibility.AccessibilityEvent;
+          import java.util.HashSet;
+          import java.util.Set;
+
+          public class KageBlockerService extends AccessibilityService {
+              private static KageBlockerService instance;
+              private SharedPreferences prefs;
+
+              public static void requestRefresh() {
+                  if (instance != null) instance.refresh();
+              }
+
+              public static boolean isAccessibilityEnabled(Context context) {
+                  String enabled = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+                  if (TextUtils.isEmpty(enabled)) return false;
+                  String target = new ComponentName(context, KageBlockerService.class).flattenToString();
+                  for (String value : enabled.split(":")) if (target.equalsIgnoreCase(value)) return true;
+                  return false;
+              }
+
+              @Override public void onServiceConnected() {
+                  super.onServiceConnected();
+                  instance = this;
+                  prefs = getSharedPreferences("kage_native_blocker", MODE_PRIVATE);
+              }
+
+              @Override public void onAccessibilityEvent(AccessibilityEvent event) {
+                  if (event == null || event.getPackageName() == null) return;
+                  refresh();
+                  if (!isProtectionActive()) return;
+                  String pkg = String.valueOf(event.getPackageName());
+                  if (blockedPackages().contains(pkg) && !pkg.equals(getPackageName())) redirectToBlockedScreen(pkg);
+              }
+
+              private void refresh() {
+                  if (prefs == null) prefs = getSharedPreferences("kage_native_blocker", MODE_PRIVATE);
+                  if (prefs.getBoolean("active", false) && System.currentTimeMillis() >= prefs.getLong("endAt", 0L)) {
+                      prefs.edit().putBoolean("active", false).remove("endAt").remove("packages").apply();
+                  }
+              }
+
+              private boolean isProtectionActive() {
+                  return prefs != null && prefs.getBoolean("active", false) && System.currentTimeMillis() < prefs.getLong("endAt", 0L);
+              }
+
+              private Set<String> blockedPackages() {
+                  Set<String> set = prefs.getStringSet("packages", new HashSet<>());
+                  return new HashSet<>(set);
+              }
+
+              private void redirectToBlockedScreen(String packageName) {
+                  Intent intent = new Intent(this, BlockedActivity.class);
+                  intent.putExtra("blocked_package", packageName);
+                  intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                  try { startActivity(intent); } catch (Exception ignored) { }
+              }
+
+              @Override public void onInterrupt() { }
+
+              @Override public void onDestroy() {
+                  if (instance == this) instance = null;
+                  super.onDestroy();
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/kage/focus/BlockedActivity.java <<'EOF'
+          package com.kage.focus;
+
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.view.Gravity;
+          import android.widget.Button;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+          import android.graphics.Color;
+
+          public class BlockedActivity extends Activity {
+              @Override protected void onCreate(Bundle state) {
+                  super.onCreate(state);
+                  render();
+              }
+
+              @Override protected void onNewIntent(android.content.Intent intent) {
+                  super.onNewIntent(intent);
+                  setIntent(intent);
+                  render();
+              }
+
+              private void render() {
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setGravity(Gravity.CENTER);
+                  root.setPadding(48,48,48,48);
+                  root.setBackgroundColor(Color.rgb(8,8,8));
+
+                  TextView title = new TextView(this);
+                  title.setText("FOCUS SESSION ACTIVE");
+                  title.setTextColor(Color.rgb(57,255,136));
+                  title.setTextSize(24);
+                  title.setGravity(Gravity.CENTER);
+
+                  TextView message = new TextView(this);
+                  message.setText("This app is protected until your KAGE Focus session ends.");
+                  message.setTextColor(Color.WHITE);
+                  message.setTextSize(16);
+                  message.setGravity(Gravity.CENTER);
+                  message.setPadding(0,24,0,32);
+
+                  Button back = new Button(this);
+                  back.setText("RETURN TO KAGE");
+                  back.setOnClickListener(v -> {
+                      Intent i = new Intent(this, MainActivity.class);
+                      i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                      startActivity(i);
+                      finish();
+                  });
+
+                  root.addView(title);
+                  root.addView(message);
+                  root.addView(back);
+                  setContentView(root);
+              }
+          }
+          EOF
+
           cat > app/src/main/java/com/kage/focus/MainActivity.java <<'EOF'
           package com.kage.focus;
+
           import android.Manifest;
           import android.app.Activity;
           import android.content.pm.PackageManager;
           import android.os.Bundle;
+          import android.webkit.JavascriptInterface;
           import android.webkit.PermissionRequest;
           import android.webkit.WebChromeClient;
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
+
           public class MainActivity extends Activity {
               private WebView webView;
               private static final int AUDIO_REQUEST = 42;
+
               @Override protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
                   webView = new WebView(this);
@@ -174,6 +470,7 @@ jobs:
                   s.setAllowFileAccess(true);
                   s.setAllowContentAccess(true);
                   s.setMediaPlaybackRequiresUserGesture(false);
+                  webView.addJavascriptInterface(new KageBridge(this), "KageNative");
                   webView.setWebViewClient(new WebViewClient());
                   webView.setWebChromeClient(new WebChromeClient() {
                       @Override public void onPermissionRequest(final PermissionRequest request) {
@@ -189,9 +486,11 @@ jobs:
                       requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, AUDIO_REQUEST);
                   webView.loadUrl("file:///android_asset/index.html");
               }
+
               @Override public void onBackPressed() {
                   if (webView.canGoBack()) webView.goBack(); else super.onBackPressed();
               }
+
               @Override protected void onDestroy() {
                   if (webView != null) webView.destroy();
                   super.onDestroy();
