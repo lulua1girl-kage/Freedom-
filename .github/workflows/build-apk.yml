@@ -119,12 +119,6 @@ jobs:
               raise SystemExit('Expected hydration code not found')
           s=s.replace(old3,new3,1)
 
-          old4="state.scheduledSessions=state.scheduledSessions.filter(x=>x.id!==due.id);const s={...due,id:createSessionId(),active:true,status:'ACTIVE',completed:false,createdAt:due.startAt,schemaVersion:2};state.sessions.unshift(s);state.focusEnabled=true;applyBlocklist(s.blocklist,true);save();toast(`Scheduled focus started · until ${formatEndDate(s.endAt)}.`);render();"
-          new4="state.scheduledSessions=state.scheduledSessions.filter(x=>x.id!==due.id);const s={...due,id:createSessionId(),active:true,status:'ACTIVE',completed:false,createdAt:due.startAt,schemaVersion:2};if(!startNativeProtection(s))return;state.sessions.unshift(s);state.focusEnabled=true;applyBlocklist(s.blocklist,true);save();toast(`Scheduled focus started · until ${formatEndDate(s.endAt)}.`);render();"
-          if old4 not in s:
-              raise SystemExit('Expected scheduled-session code not found')
-          s=s.replace(old4,new4,1)
-
           p.write_text(s,encoding='utf-8')
           print('Patched native protection bridge:', p)
           PY
@@ -202,7 +196,7 @@ jobs:
                   <item name="android:navigationBarColor">#080808</item>
                   <item name="android:statusBarColor">#080808</item>
                   <item name="android:windowLightStatusBar">false</item>
-          </style>
+              </style>
           </resources>
           EOF
 
@@ -238,7 +232,7 @@ jobs:
                   <service
                       android:name=".KageBlockerService"
                       android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-                      android:exported="false">
+                      android:exported="true">
                       <intent-filter>
                           <action android:name="android.accessibilityservice.AccessibilityService" />
                       </intent-filter>
@@ -385,12 +379,13 @@ jobs:
           package com.kage.focus;
 
           import android.app.Activity;
+          import android.content.Intent;
+          import android.graphics.Color;
           import android.os.Bundle;
           import android.view.Gravity;
           import android.widget.Button;
           import android.widget.LinearLayout;
           import android.widget.TextView;
-          import android.graphics.Color;
 
           public class BlockedActivity extends Activity {
               @Override protected void onCreate(Bundle state) {
@@ -398,7 +393,7 @@ jobs:
                   render();
               }
 
-              @Override protected void onNewIntent(android.content.Intent intent) {
+              @Override protected void onNewIntent(Intent intent) {
                   super.onNewIntent(intent);
                   setIntent(intent);
                   render();
@@ -448,7 +443,6 @@ jobs:
           import android.app.Activity;
           import android.content.pm.PackageManager;
           import android.os.Bundle;
-          import android.webkit.JavascriptInterface;
           import android.webkit.PermissionRequest;
           import android.webkit.WebChromeClient;
           import android.webkit.WebSettings;
